@@ -844,7 +844,7 @@ async def background_checker(app: Application):
 
 
 async def post_init(app: Application):
-    app.create_task(background_checker(app))
+    pass
 
 
 def main():
