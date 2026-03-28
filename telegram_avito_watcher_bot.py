@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -37,37 +38,25 @@ from telegram.ext import (
     filters,
 )
 
-# =========================
-# CONFIG
-# =========================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 STATE_PATH = Path(os.getenv("STATE_PATH", "bot_state.json"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Интервалы фона
-CHECK_LOOP_INTERVAL = int(os.getenv("CHECK_LOOP_INTERVAL", "10"))      # как часто просыпается общий цикл
-WATCH_MIN_INTERVAL = int(os.getenv("WATCH_MIN_INTERVAL", "240"))      # минимум между проверками одного фильтра
+CHECK_LOOP_INTERVAL = int(os.getenv("CHECK_LOOP_INTERVAL", "10"))
+WATCH_MIN_INTERVAL = int(os.getenv("WATCH_MIN_INTERVAL", "240"))
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "25"))
 
-# Анти-429
-HTTP_BASE_DELAY = float(os.getenv("HTTP_BASE_DELAY", "10"))           # пауза между любыми запросами к Avito
-HTTP_JITTER = float(os.getenv("HTTP_JITTER", "2"))                    # небольшой рандом
-MAX_BACKOFF = int(os.getenv("MAX_BACKOFF", "1800"))                   # максимум 30 минут
-MAX_ITEMS_PER_CHECK = int(os.getenv("MAX_ITEMS_PER_CHECK", "12"))     # не разбирать слишком много за раз
+HTTP_BASE_DELAY = float(os.getenv("HTTP_BASE_DELAY", "10"))
+HTTP_JITTER = float(os.getenv("HTTP_JITTER", "2"))
+MAX_BACKOFF = int(os.getenv("MAX_BACKOFF", "1800"))
+MAX_ITEMS_PER_CHECK = int(os.getenv("MAX_ITEMS_PER_CHECK", "12"))
 
-# Телеграм
 MAX_TG_MESSAGE_LEN = 3500
 
-# Авторизация доступа к боту: пусто = любой пользователь
 ALLOWED_USER_IDS_RAW = os.getenv("ALLOWED_USER_IDS", "").strip()
 ALLOWED_USER_IDS = {
     int(x.strip()) for x in ALLOWED_USER_IDS_RAW.split(",") if x.strip().isdigit()
 }
-
-# =========================
-# LOGGING
-# =========================
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -76,19 +65,11 @@ logging.basicConfig(
 logger = logging.getLogger("avito_bot")
 
 
-# =========================
-# EXCEPTIONS
-# =========================
-
 class AvitoRateLimitError(Exception):
     def __init__(self, retry_after: int = 60):
         super().__init__(f"Avito rate limited, retry_after={retry_after}")
         self.retry_after = retry_after
 
-
-# =========================
-# DATA MODELS
-# =========================
 
 @dataclass
 class ParsedItem:
@@ -99,13 +80,9 @@ class ParsedItem:
     city: str
 
 
-# =========================
-# STATE
-# =========================
-
 def default_state() -> Dict[str, Any]:
     return {
-        "subscriptions": {},   # user_id -> [watch, watch, ...]
+        "subscriptions": {},
         "version": 1,
     }
 
@@ -171,10 +148,6 @@ def parse_optional_int(raw: str) -> Optional[int]:
     return int(digits)
 
 
-# =========================
-# ACCESS
-# =========================
-
 def is_allowed_user(user_id: Optional[int]) -> bool:
     if user_id is None:
         return False
@@ -196,10 +169,6 @@ async def guard_access(update: Update) -> bool:
         await update.callback_query.answer(text, show_alert=True)
     return False
 
-
-# =========================
-# TELEGRAM UI
-# =========================
 
 MENU_TEXT = "Выбери действие:"
 BTN_ADD = "➕ Добавить фильтр"
@@ -279,10 +248,6 @@ def build_watch_summary(watch: Dict[str, Any]) -> str:
     )
 
 
-# =========================
-# AVITO URL HELPERS
-# =========================
-
 def normalize_avito_url(url: str) -> str:
     url = url.strip()
     if not url:
@@ -297,9 +262,7 @@ def normalize_avito_url(url: str) -> str:
     path = parsed.path or "/"
     query = parsed.query
 
-    # Если пользователь вставил что-то без домена
     if "avito.ru" not in netloc:
-        # Пытаемся превратить в поиск по сайту
         q = url.strip()
         q = q.replace("https://", "").replace("http://", "")
         q = q.strip("/")
@@ -317,10 +280,6 @@ def extract_search_keyword_from_url(url: str) -> str:
     except Exception:
         return ""
 
-
-# =========================
-# HTTP / RATE LIMIT
-# =========================
 
 AVITO_HEADERS = {
     "User-Agent": (
@@ -373,10 +332,6 @@ async def fetch_text(application: Application, url: str) -> str:
         return await resp.text()
 
 
-# =========================
-# AVITO PARSING
-# =========================
-
 def cleanup_text(s: str) -> str:
     s = html.unescape(s or "")
     s = re.sub(r"\s+", " ", s).strip()
@@ -394,14 +349,9 @@ def parse_price(raw: str) -> Optional[int]:
 
 
 def parse_items_from_json_chunks(page_html: str) -> List[ParsedItem]:
-    """
-    Пытаемся вытащить объявления из JSON-подобных кусков страницы.
-    Это основной путь, если Avito отдает данные в скриптах.
-    """
     found: List[ParsedItem] = []
     seen_ids = set()
 
-    # Ищем блоки, похожие на item/id/title/url/price/location
     pattern = re.compile(
         r'"id"\s*:\s*"?(?P<id>\d{6,})"?'
         r'.{0,800}?'
@@ -451,14 +401,9 @@ def parse_items_from_json_chunks(page_html: str) -> List[ParsedItem]:
 
 
 def parse_items_from_links(page_html: str) -> List[ParsedItem]:
-    """
-    Fallback: вытаскиваем объявления из ссылок и ближайшего текста.
-    Менее точно, но спасает, если JSON-паттерн не сработал.
-    """
     found: List[ParsedItem] = []
     seen_ids = set()
 
-    # Ищем ссылки вида /..._<id>
     link_pattern = re.compile(
         r'<a[^>]+href="(?P<href>/[^"]*?_(?P<id>\d{6,})[^"]*)"[^>]*>(?P<body>.*?)</a>',
         re.DOTALL | re.IGNORECASE,
@@ -476,7 +421,6 @@ def parse_items_from_links(page_html: str) -> List[ParsedItem]:
         if not text:
             continue
 
-        # Берем кусок после ссылки, чтобы попытаться вытащить цену/город
         start = m.end()
         tail = page_html[start:start + 1200]
         tail_text = cleanup_text(re.sub(r"<[^>]+>", " ", tail))
@@ -488,7 +432,6 @@ def parse_items_from_links(page_html: str) -> List[ParsedItem]:
         if price_match:
             price = parse_price(price_match.group(1))
 
-        # Простой heuristics по городу
         city_match = re.search(r"(?:сегодня|вчера|\d{1,2}:\d{2})\s+([A-Za-zА-Яа-яЁё\-\s]{2,40})", tail_text)
         if city_match:
             city = cleanup_text(city_match.group(1))
@@ -542,10 +485,6 @@ async def fetch_avito_items(application: Application, watch: Dict[str, Any]) -> 
     return items
 
 
-# =========================
-# FILTERS
-# =========================
-
 def item_matches_filters(item: Dict[str, Any], watch: Dict[str, Any]) -> bool:
     title = (item.get("title") or "").lower()
     city = (item.get("city") or "").lower()
@@ -577,10 +516,6 @@ def item_matches_filters(item: Dict[str, Any], watch: Dict[str, Any]) -> bool:
 def apply_filters(items: List[Dict[str, Any]], watch: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [item for item in items if item_matches_filters(item, watch)]
 
-
-# =========================
-# TG MESSAGE HELPERS
-# =========================
 
 def format_item(item: Dict[str, Any]) -> str:
     title = html.escape(item.get("title") or "Без названия")
@@ -630,10 +565,6 @@ async def send_new_items(
     await safe_send_long_text(user_id, header + body, application)
 
 
-# =========================
-# BACKGROUND LOOP
-# =========================
-
 async def process_one_watch(
     application: Application,
     state: Dict[str, Any],
@@ -664,7 +595,6 @@ async def process_one_watch(
         for item in items:
             seen_ids.add(str(item["id"]))
 
-        # ограничиваем размер state
         watch["seen_ids"] = list(seen_ids)[-1000:]
         watch["errors"] = 0
         watch["backoff_until"] = 0
@@ -796,10 +726,6 @@ async def post_shutdown(application: Application) -> None:
 
     logger.info("background services stopped")
 
-
-# =========================
-# COMMANDS / HANDLERS
-# =========================
 
 HELP_TEXT = (
     "Бот отслеживает новые объявления Авито по фильтрам.\n\n"
@@ -1126,6 +1052,9 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not await guard_access(update):
         return
 
+    if context.user_data.get("new_watch") is not None:
+        return
+
     text = (update.message.text or "").strip()
 
     if text == BTN_ADD:
@@ -1153,10 +1082,6 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled telegram error", exc_info=context.error)
 
-
-# =========================
-# APP BUILD
-# =========================
 
 def build_application() -> Application:
     if not BOT_TOKEN:
@@ -1191,26 +1116,21 @@ def build_application() -> Application:
 
     application.add_error_handler(error_handler)
 
-    application.add_handler(CommandHandler("start", start_cmd))
-    application.add_handler(CommandHandler("help", help_cmd))
-    application.add_handler(CommandHandler("list", list_watches))
-    application.add_handler(CommandHandler("check", check_all_now))
-    application.add_handler(add_watch_conv)
-    application.add_handler(CallbackQueryHandler(callback_actions, pattern=r"^(toggle|delete|check):\d+$"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
+    application.add_handler(add_watch_conv, group=0)
+    application.add_handler(CommandHandler("start", start_cmd), group=1)
+    application.add_handler(CommandHandler("help", help_cmd), group=1)
+    application.add_handler(CommandHandler("list", list_watches), group=1)
+    application.add_handler(CommandHandler("check", check_all_now), group=1)
+    application.add_handler(CallbackQueryHandler(callback_actions, pattern=r"^(toggle|delete|check):\d+$"), group=1)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router), group=2)
 
     return application
 
-
-# =========================
-# MAIN
-# =========================
 
 def main() -> None:
     logger.info("Starting Avito bot")
     application = build_application()
 
-    # stop_signals у run_polling уже есть, но пусть будет явно
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         close_loop=False,
