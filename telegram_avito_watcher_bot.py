@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -271,16 +270,6 @@ def normalize_avito_url(url: str) -> str:
     return f"{scheme}://{netloc}{path}" + (f"?{query}" if query else "")
 
 
-def extract_search_keyword_from_url(url: str) -> str:
-    try:
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        q = qs.get("q", [""])[0].strip()
-        return q
-    except Exception:
-        return ""
-
-
 AVITO_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -311,7 +300,6 @@ async def wait_http_slot(application: Application) -> None:
 
 async def fetch_text(application: Application, url: str) -> str:
     await wait_http_slot(application)
-
     session: aiohttp.ClientSession = application.bot_data["http_session"]
 
     async with session.get(url, headers=AVITO_HEADERS, allow_redirects=True) as resp:
@@ -673,11 +661,9 @@ async def background_checker(application: Application) -> None:
         started = time.monotonic()
         try:
             await run_background_checks(application)
-
         except asyncio.CancelledError:
             logger.info("background_checker cancelled")
             raise
-
         except Exception:
             logger.exception("background_checker crashed, loop continues")
 
@@ -756,17 +742,21 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await guard_access(update):
         return
 
-    await update.message.reply_text(
-        "Бот запущен.\n\n" + MENU_TEXT,
-        reply_markup=MAIN_KEYBOARD,
-    )
+    if update.message:
+        await update.message.reply_text(
+            "Бот запущен.\n\n" + MENU_TEXT,
+            reply_markup=MAIN_KEYBOARD,
+        )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await guard_access(update):
         return
-    target = update.message if update.message else update.callback_query.message
-    await target.reply_text(HELP_TEXT, reply_markup=MAIN_KEYBOARD)
+
+    if update.message:
+        await update.message.reply_text(HELP_TEXT, reply_markup=MAIN_KEYBOARD)
+    elif update.callback_query and update.callback_query.message:
+        await update.callback_query.message.reply_text(HELP_TEXT, reply_markup=MAIN_KEYBOARD)
 
 
 async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -774,10 +764,11 @@ async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     context.user_data.pop("new_watch", None)
-    await update.message.reply_text(
-        "Добавление фильтра отменено.",
-        reply_markup=MAIN_KEYBOARD,
-    )
+    if update.message:
+        await update.message.reply_text(
+            "Добавление фильтра отменено.",
+            reply_markup=MAIN_KEYBOARD,
+        )
     return ConversationHandler.END
 
 
@@ -786,12 +777,14 @@ async def add_watch_start(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return ConversationHandler.END
 
     context.user_data["new_watch"] = {}
-    await update.message.reply_text(
-        "Пришли ссылку на поиск Avito.\n\n"
-        "Пример:\n"
-        "https://www.avito.ru/all?q=iphone",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+
+    if update.message:
+        await update.message.reply_text(
+            "Пришли ссылку на поиск Avito.\n\n"
+            "Пример:\n"
+            "https://www.avito.ru/all?q=iphone",
+            reply_markup=ReplyKeyboardRemove(),
+        )
     return ADD_URL
 
 
@@ -1052,14 +1045,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not await guard_access(update):
         return
 
-    if context.user_data.get("new_watch") is not None:
-        return
-
     text = (update.message.text or "").strip()
-
-    if text == BTN_ADD:
-        await add_watch_start(update, context)
-        return
 
     if text == BTN_LIST:
         await list_watches(update, context)
@@ -1104,6 +1090,7 @@ def build_application() -> Application:
         per_chat=True,
         per_user=True,
         per_message=False,
+        allow_reentry=True,
     )
 
     application = (
@@ -1121,7 +1108,10 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("help", help_cmd), group=1)
     application.add_handler(CommandHandler("list", list_watches), group=1)
     application.add_handler(CommandHandler("check", check_all_now), group=1)
-    application.add_handler(CallbackQueryHandler(callback_actions, pattern=r"^(toggle|delete|check):\d+$"), group=1)
+    application.add_handler(
+        CallbackQueryHandler(callback_actions, pattern=r"^(toggle|delete|check):\d+$"),
+        group=1,
+    )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router), group=2)
 
     return application
